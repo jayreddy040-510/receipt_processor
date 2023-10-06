@@ -24,6 +24,7 @@ Note: `text like this` means these are commands to be entered into your terminal
     1. If you are on Windows/Mac, the quickest and simplest way to procure docker-compose is to install Docker Desktop from the official Docker page: https://www.docker.com/products/docker-desktop/ . Boot it up and check `docker-compose --version`.
     2. Alternatively if you are using Homebrew as a native package manager, you can run `brew install docker-compose`.
     3. If you are on a Linux distribution you can download the binary from the docker-compose group's github releases page: https://github.com/docker/compose/releases . Follow the instructions under 'Where to Get Docker Compose' at this page: https://github.com/docker/compose
+    4. After confirming docker-compose is installed by running `docker-compose --version` you can boot up the docker system by running `docker-compose up --build -d`.
 <br>
 <br>
 ## Example cURL commands (if you're c/p'ing from the .md file don't include the backticks ``)

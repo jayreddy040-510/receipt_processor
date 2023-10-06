@@ -1,0 +1,24 @@
+version: '3'
+
+services:
+  server:
+    container_name: server
+    build:
+      context: ./server
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    environment:
+      - SERVER_PORT=8080
+      - REDIS_ADDR=redis:6379
+      - DB_TIMEOUT_IN_MS=500
+      - MAX_DB_CONN_RETRIES=3
+      - REDIS_TTL_IN_S=600
+
+  redis:
+    container_name: redis
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+

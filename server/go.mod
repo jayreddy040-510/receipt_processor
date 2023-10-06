@@ -3,6 +3,7 @@ module github.com/jayreddy040-510/receipt_processor
 go 1.21.0
 
 require (
+	github.com/go-chi/chi v1.5.5
 	github.com/google/uuid v1.3.1
 	github.com/redis/go-redis/v9 v9.2.1
 )

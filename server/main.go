@@ -64,6 +64,27 @@ func (rs *redisStore) checkConnection() error {
 	return rs.client.Ping(ctx).Err()
 }
 
+func (rs *redisStore) getKey(key string) (string, error) {
+	// see design decision in setKey below
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.dbTimeoutInMs))
+	defer cancel()
+
+	for i := 0; i < rs.config.maxDBConnRetries; i++ {
+		storedValue, err := rs.client.Get(ctx, key).Result()
+		if err == context.DeadlineExceeded {
+			log.Printf("Connection to DB timed out, attempting retry, retries attempted: %v", i)
+			continue
+		} else if err == redis.Nil {
+			return "", fmt.Errorf("Key does not exist in database: %v", err)
+		} else if err != nil {
+			return "", fmt.Errorf("Error getting key from database: %v", err)
+		} else {
+			return storedValue, nil
+		}
+	}
+	return "", fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)
+}
+
 func (rs *redisStore) setKey(key, value string) error {
 	// design decision: pass in ctx with timeout to setter from main or define here?
 	// because only 1 way we plan on setting and don't plan on changing cancel/timeout logic,
@@ -83,6 +104,19 @@ func (rs *redisStore) setKey(key, value string) error {
 		}
 	}
 	return fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)
+}
+
+func isValidUUIDv4(s string) (bool, error) {
+	// validate incoming URL id before allowing to touch DB
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return false, fmt.Errorf("Invalid UUIDv4: %v", err)
+	}
+	// checks if UUIDv4
+	if u.Version() != uuid.Version(4) {
+		return false, fmt.Errorf("Invalid UUIDv4: %v", err)
+    }
+	return true, nil
 }
 
 func parseDollarAsStringInput(amt string) (float64, error) {
@@ -250,7 +284,7 @@ func (a *App) processReceiptHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
 		return
 	}
-    log.Printf("id: %s, pts: %d", uuidString, pointsTotal)
+	log.Printf("id: %s, pts: %d", uuidString, pointsTotal)
 	responseToClient := map[string]string{
 		"id": uuidString,
 	}
@@ -258,6 +292,36 @@ func (a *App) processReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(responseToClient); err != nil {
 		log.Printf("Error encoding client response: %v", err)
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
+	}
+	return
+}
+
+func (a *App) getPointsHandler(w http.ResponseWriter, r *http.Request) {
+	receiptId := chi.URLParam(r, "id")
+	if ok, err := isValidUUIDv4(receiptId); !ok {
+		log.Println(err)
+		http.Error(w, "No receipt found for that id", http.StatusNotFound)
+		return
+	}
+	pointsValue, err := a.db.getKey(receiptId)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "No receipt found for that id", http.StatusNotFound)
+		return
+	}
+	pointsValueAsInt, err := strconv.Atoi(pointsValue)
+	if err != nil {
+		log.Printf("Error converting points string to int: %v", err)
+		http.Error(w, "No receipt found for that id", http.StatusNotFound)
+		return
+	}
+	responseToClient := map[string]int{
+		"points": pointsValueAsInt,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(responseToClient); err != nil {
+		log.Printf("Error encoding client response: %v", err)
+		http.Error(w, "No receipt found for that id", http.StatusNotFound)
 	}
 	return
 }
@@ -325,7 +389,10 @@ func main() {
 
 	// init router, connect routes to handlers
 	r := chi.NewRouter()
-	r.Post("/processReceipt", a.processReceiptHandler)
+	r.Route("/receipts", func(r chi.Router) {
+		r.Post("/process", a.processReceiptHandler)
+		r.Get("/{id}/points", a.getPointsHandler)
+	})
 
 	// boot up server
 	log.Printf("Starting server on :%s...", cfg.serverPort)

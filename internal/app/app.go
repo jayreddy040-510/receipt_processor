@@ -206,7 +206,7 @@ func (a *App) ProcessReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	pointsTotal += pointsFromPurchaseTimeHour
 	pointsTotalAsString := strconv.Itoa(pointsTotal)
 	uuidString := uuid.New().String()
-	err = a.Db.SetKey(uuidString, pointsTotalAsString)
+	err = a.Db.SetKey(r.Context(), uuidString, pointsTotalAsString)
 	if err != nil {
 		log.Printf("Error setting DB key-value pair: %v", err)
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
@@ -231,7 +231,7 @@ func (a *App) GetPointsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
 		return
 	}
-	pointsValue, err := a.Db.GetKey(receiptId)
+	pointsValue, err := a.Db.GetKey(r.Context(), receiptId)
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)

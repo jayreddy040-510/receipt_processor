@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -24,7 +25,9 @@ func main() {
 	// init and check connection to db
 	log.Println("Initializing DB client and testing connection...")
 	db := db.NewRedisStore(cfg)
-	if err := db.CheckConnection(); err != nil {
+    ctx, cancel := context.WithTimeout(context.Background(), cfg.DbTimeoutInMs)
+    defer cancel()
+	if err := db.CheckConnection(ctx); err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
 	log.Println("Successfully connected to DB!")
@@ -34,8 +37,19 @@ func main() {
 		Db: db,
 	}
 
-	// init router, connect routes to handlers
+	// init router
 	r := chi.NewRouter()
+
+    r.Use(func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            ctx, cancel := context.WithTimeout(r.Context(), cfg.DbTimeoutInMs) 
+            defer cancel()
+
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    })
+
+    // connect routes to handlers
 	r.Route("/receipts", func(r chi.Router) {
 		r.Post("/process", a.ProcessReceiptHandler)
 		r.Get("/{id}/points", a.GetPointsHandler)

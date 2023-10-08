@@ -25,18 +25,11 @@ func NewRedisStore(config config.Config) *RedisStore {
 	}
 }
 
-func (rs *RedisStore) CheckConnection() error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.DbTimeoutInMs))
-	defer cancel()
-
+func (rs *RedisStore) CheckConnection(ctx context.Context) error {
 	return rs.client.Ping(ctx).Err()
 }
 
-func (rs *RedisStore) GetKey(key string) (string, error) {
-	// see design decision in setKey below
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.DbTimeoutInMs))
-	defer cancel()
-
+func (rs *RedisStore) GetKey(ctx context.Context, key string) (string, error) {
 	for i := 0; i < rs.config.MaxDBConnRetries; i++ {
 		storedValue, err := rs.client.Get(ctx, key).Result()
 		if err == context.DeadlineExceeded {
@@ -53,13 +46,7 @@ func (rs *RedisStore) GetKey(key string) (string, error) {
 	return "", fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)
 }
 
-func (rs *RedisStore) SetKey(key, value string) error {
-	// design decision: pass in ctx with timeout to setter from main or define here?
-	// because only 1 way we plan on setting and don't plan on changing cancel/timeout logic,
-	// i think it's fine to init ctx here
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.DbTimeoutInMs))
-	defer cancel()
-
+func (rs *RedisStore) SetKey(ctx context.Context, key, value string) error {
 	for i := 0; i < rs.config.MaxDBConnRetries; i++ {
 		err := rs.client.Set(ctx, key, value, time.Second*time.Duration(rs.config.RedisTTLInSec)).Err()
 		if err == context.DeadlineExceeded {

@@ -1,22 +1,25 @@
-package main
+package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/jayreddy040-510/receipt_processor/internal/db"
+
 	"github.com/go-chi/chi"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
+
+type App struct {
+	Db *db.RedisStore
+}
 
 type item struct {
 	ShortDescription string `json:"shortDescription"`
@@ -31,81 +34,6 @@ type receipt struct {
 	Total        string `json:"total"`
 }
 
-type config struct {
-	serverPort       string
-	redisAddr        string
-	dbTimeoutInMs    time.Duration
-	redisTTLInSec    time.Duration
-	maxDBConnRetries int
-}
-
-type redisStore struct {
-	client *redis.Client
-	config config
-}
-
-type App struct {
-	db *redisStore
-}
-
-func NewRedisStore(config config) *redisStore {
-	return &redisStore{
-		client: redis.NewClient(&redis.Options{
-			Addr: config.redisAddr,
-		}),
-		config: config,
-	}
-}
-
-func (rs *redisStore) checkConnection() error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.dbTimeoutInMs))
-	defer cancel()
-
-	return rs.client.Ping(ctx).Err()
-}
-
-func (rs *redisStore) getKey(key string) (string, error) {
-	// see design decision in setKey below
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.dbTimeoutInMs))
-	defer cancel()
-
-	for i := 0; i < rs.config.maxDBConnRetries; i++ {
-		storedValue, err := rs.client.Get(ctx, key).Result()
-		if err == context.DeadlineExceeded {
-			log.Printf("Connection to DB timed out, attempting retry, retries attempted: %v", i)
-			continue
-		} else if err == redis.Nil {
-			return "", fmt.Errorf("Key does not exist in database: %v", err)
-		} else if err != nil {
-			return "", fmt.Errorf("Error getting key from database: %v", err)
-		} else {
-			return storedValue, nil
-		}
-	}
-	return "", fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)
-}
-
-func (rs *redisStore) setKey(key, value string) error {
-	// design decision: pass in ctx with timeout to setter from main or define here?
-	// because only 1 way we plan on setting and don't plan on changing cancel/timeout logic,
-	// i think it's fine to init ctx here
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(rs.config.dbTimeoutInMs))
-	defer cancel()
-
-	for i := 0; i < rs.config.maxDBConnRetries; i++ {
-		err := rs.client.Set(ctx, key, value, time.Second*time.Duration(rs.config.redisTTLInSec)).Err()
-		if err == context.DeadlineExceeded {
-			log.Printf("Connection to DB timed out, attempting retry, retries attempted: %v", i)
-			continue
-		} else if err != nil {
-			return fmt.Errorf("Error setting key in database: %v", err)
-		} else {
-			return err
-		}
-	}
-	return fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)
-}
-
 func isValidUUIDv4(s string) (bool, error) {
 	// validate incoming URL id before allowing to touch DB
 	u, err := uuid.Parse(s)
@@ -115,7 +43,7 @@ func isValidUUIDv4(s string) (bool, error) {
 	// checks if UUIDv4
 	if u.Version() != uuid.Version(4) {
 		return false, fmt.Errorf("Invalid UUIDv4: %v", err)
-    }
+	}
 	return true, nil
 }
 
@@ -241,7 +169,7 @@ func calculatePurchaseTimePoints(timeString, dateString string) (int, error) {
 	return 0, nil
 }
 
-func (a *App) processReceiptHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) ProcessReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	var rec receipt
 	var pointsTotal int
 	err := json.NewDecoder(r.Body).Decode(&rec)
@@ -278,7 +206,7 @@ func (a *App) processReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	pointsTotal += pointsFromPurchaseTimeHour
 	pointsTotalAsString := strconv.Itoa(pointsTotal)
 	uuidString := uuid.New().String()
-	err = a.db.setKey(uuidString, pointsTotalAsString)
+	err = a.Db.SetKey(uuidString, pointsTotalAsString)
 	if err != nil {
 		log.Printf("Error setting DB key-value pair: %v", err)
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
@@ -296,14 +224,14 @@ func (a *App) processReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func (a *App) getPointsHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) GetPointsHandler(w http.ResponseWriter, r *http.Request) {
 	receiptId := chi.URLParam(r, "id")
 	if ok, err := isValidUUIDv4(receiptId); !ok {
 		log.Println(err)
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
 		return
 	}
-	pointsValue, err := a.db.getKey(receiptId)
+	pointsValue, err := a.Db.GetKey(receiptId)
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
@@ -324,80 +252,4 @@ func (a *App) getPointsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
 	}
 	return
-}
-
-func loadConfig() (config, error) {
-	// design decision: return config or *config? since main functionality of config is
-	// to read it and not write to it, decided to return struct
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "redis:6379"
-	}
-	serverPort := os.Getenv("SERVER_PORT")
-	if serverPort == "" {
-		serverPort = "8080"
-	}
-
-	// strconv will throw error if os.Getenv("FOO") returns "" - can catch early
-	dbTimeoutInMs, err := strconv.Atoi(os.Getenv("DB_TIMEOUT_IN_MS"))
-	if err != nil {
-		return config{}, fmt.Errorf("Error converting DB_TIMEOUT env to int: %v", err)
-	}
-
-	redisTTLInSec, err := strconv.Atoi(os.Getenv("REDIS_TTL_IN_S"))
-	if err != nil {
-		return config{}, fmt.Errorf("Error converting REDIS_TTL env to int: %v", err)
-	}
-
-	maxDBConnRetries, err := strconv.Atoi(os.Getenv("MAX_DB_CONN_RETRIES"))
-	if err != nil {
-		return config{}, fmt.Errorf("Error converting MAX_DB_CONN_RETRIES env to int: %v", err)
-	}
-
-	appConfig := config{
-		serverPort:       serverPort,
-		redisAddr:        redisAddr,
-		dbTimeoutInMs:    time.Millisecond * time.Duration(dbTimeoutInMs),
-		redisTTLInSec:    time.Second * time.Duration(redisTTLInSec),
-		maxDBConnRetries: maxDBConnRetries,
-	}
-	return appConfig, nil
-}
-
-func main() {
-	// load config
-	log.Println("Loading configuration...")
-	cfg, err := loadConfig()
-	if err != nil {
-		log.Fatalf("Error loading configuration: %v", err)
-		return
-	}
-	log.Println("Configuration loaded!")
-
-	// init and check connection to db
-	log.Println("Initializing DB client and testing connection...")
-	db := NewRedisStore(cfg)
-	if err := db.checkConnection(); err != nil {
-		log.Fatalf("Error connecting to database: %v", err)
-	}
-	log.Println("Successfully connected to DB!")
-
-	// init shared resources struct
-	a := &App{
-		db: db,
-	}
-
-	// init router, connect routes to handlers
-	r := chi.NewRouter()
-	r.Route("/receipts", func(r chi.Router) {
-		r.Post("/process", a.processReceiptHandler)
-		r.Get("/{id}/points", a.getPointsHandler)
-	})
-
-	// boot up server
-	log.Printf("Starting server on :%s...", cfg.serverPort)
-	if err := http.ListenAndServe(":"+cfg.serverPort, r); err != nil {
-		log.Fatalf("Server exited: %v", err)
-	}
-
 }

@@ -171,9 +171,31 @@ func calculatePurchaseTimePoints(timeString, dateString string) (int, error) {
 	return 0, nil
 }
 
+func calculateAllPoints(rec receipt) (int, error) {
+	var pointsTotal int
+	pointsTotal += calculateRetailerPoints(rec.Retailer)
+	pointsFromReceiptTotal, err := calculateReceiptTotalPoints(rec.Total)
+	if err != nil {
+		return -1, fmt.Errorf("Error calculating points receipt \"total\": %v", err)
+	}
+	pointsTotal += pointsFromReceiptTotal
+	pointsTotal += (len(rec.Items) / 2) * 5 // dont need a helper for this (5 points per pair of items)
+	pointsTotal += calculatePointsFromItems(rec.Items)
+	pointsFromPurchaseDateDay, err := calculatePurchaseDatePoints(rec.PurchaseDate)
+	if err != nil {
+		return -1, fmt.Errorf("Error calculating points receipt \"purchase date\": %v", err)
+	}
+	pointsTotal += pointsFromPurchaseDateDay
+	pointsFromPurchaseTimeHour, err := calculatePurchaseTimePoints(rec.PurchaseTime, rec.PurchaseDate)
+	if err != nil {
+		return -1, fmt.Errorf("Error calculating points receipt \"purchase time\": %v", err)
+	}
+	pointsTotal += pointsFromPurchaseTimeHour
+	return pointsTotal, nil
+}
+
 func (a *App) ProcessReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	var rec receipt
-	var pointsTotal int
 	err := json.NewDecoder(r.Body).Decode(&rec)
 	defer r.Body.Close()
 	if err != nil {
@@ -181,31 +203,12 @@ func (a *App) ProcessReceiptHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
 		return
 	}
-
-	pointsTotal += calculateRetailerPoints(rec.Retailer)
-	pointsFromReceiptTotal, err := calculateReceiptTotalPoints(rec.Total)
+	pointsTotal, err := calculateAllPoints(rec)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Error calculating receipt points: %v", err)
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
 		return
 	}
-	pointsTotal += pointsFromReceiptTotal
-	pointsTotal += (len(rec.Items) / 2) * 5 // dont need a helper for this (5 points per pair of items)
-	pointsTotal += calculatePointsFromItems(rec.Items)
-	pointsFromPurchaseDateDay, err := calculatePurchaseDatePoints(rec.PurchaseDate)
-	if err != nil {
-		log.Println(err)
-		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
-		return
-	}
-	pointsTotal += pointsFromPurchaseDateDay
-	pointsFromPurchaseTimeHour, err := calculatePurchaseTimePoints(rec.PurchaseTime, rec.PurchaseDate)
-	if err != nil {
-		log.Println(err)
-		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
-		return
-	}
-	pointsTotal += pointsFromPurchaseTimeHour
 	pointsTotalAsString := strconv.Itoa(pointsTotal)
 	uuidString := uuid.New().String()
 	ctx, cancel := context.WithTimeout(r.Context(), a.Config.DbTimeoutInMs)

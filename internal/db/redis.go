@@ -55,7 +55,7 @@ func (rs *RedisStore) SetKey(ctx context.Context, key, value string) error {
 		} else if err != nil {
 			return fmt.Errorf("Error setting key in database: %v", err)
 		} else {
-			return err
+			return nil
 		}
 	}
 	return fmt.Errorf("Error connecting to DB: %v. Max retries attempted.", context.DeadlineExceeded)

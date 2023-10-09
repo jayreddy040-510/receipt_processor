@@ -13,7 +13,8 @@ services:
     environment:
       - SERVER_PORT=8080
       - REDIS_ADDR=redis:6379
-      - DB_TIMEOUT_IN_MS=500
+      - DB_TIMEOUT_IN_MS=300
+      - REQUEST_TIMEOUT_IN_MS=500
       - MAX_DB_CONN_RETRIES=3
       - REDIS_TTL_IN_S=600
 

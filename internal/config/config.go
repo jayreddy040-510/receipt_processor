@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	ServerPort       string
-	RedisAddr        string
-	DbTimeoutInMs    time.Duration
-	RedisTTLInSec    time.Duration
-	MaxDBConnRetries int
+	ServerPort         string
+	RedisAddr          string
+	DbTimeoutInMs      time.Duration
+	RedisTTLInSec      time.Duration
+	RequestTimeoutInMs time.Duration
+	MaxDBConnRetries   int
 }
 
 func Load() (Config, error) {
@@ -33,6 +34,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("Error converting DB_TIMEOUT env to int: %v", err)
 	}
 
+	reqTimeoutInMs, err := strconv.Atoi(os.Getenv("REQUEST_TIMEOUT_IN_MS"))
+	if err != nil {
+		return Config{}, fmt.Errorf("Error converting DB_TIMEOUT env to int: %v", err)
+	}
+
 	redisTTLInSec, err := strconv.Atoi(os.Getenv("REDIS_TTL_IN_S"))
 	if err != nil {
 		return Config{}, fmt.Errorf("Error converting REDIS_TTL env to int: %v", err)
@@ -44,11 +50,12 @@ func Load() (Config, error) {
 	}
 
 	appConfig := Config{
-		ServerPort:       serverPort,
-		RedisAddr:        redisAddr,
-		DbTimeoutInMs:    time.Millisecond * time.Duration(dbTimeoutInMs),
-		RedisTTLInSec:    time.Second * time.Duration(redisTTLInSec),
-		MaxDBConnRetries: maxDBConnRetries,
+		ServerPort:         serverPort,
+		RedisAddr:          redisAddr,
+		RequestTimeoutInMs: time.Millisecond * time.Duration(reqTimeoutInMs),
+		DbTimeoutInMs:      time.Millisecond * time.Duration(dbTimeoutInMs),
+		RedisTTLInSec:      time.Second * time.Duration(redisTTLInSec),
+		MaxDBConnRetries:   maxDBConnRetries,
 	}
 	return appConfig, nil
 }

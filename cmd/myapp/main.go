@@ -25,8 +25,8 @@ func main() {
 	// init and check connection to db
 	log.Println("Initializing DB client and testing connection...")
 	db := db.NewRedisStore(cfg)
-    ctx, cancel := context.WithTimeout(context.Background(), cfg.DbTimeoutInMs)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.DbTimeoutInMs)
+	defer cancel()
 	if err := db.CheckConnection(ctx); err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	}
@@ -35,21 +35,22 @@ func main() {
 	// init shared resources struct
 	a := &app.App{
 		Db: db,
+        Config: cfg,
 	}
 
 	// init router
 	r := chi.NewRouter()
 
-    r.Use(func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            ctx, cancel := context.WithTimeout(r.Context(), cfg.DbTimeoutInMs) 
-            defer cancel()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), cfg.RequestTimeoutInMs)
+			defer cancel()
 
-            next.ServeHTTP(w, r.WithContext(ctx))
-        })
-    })
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	})
 
-    // connect routes to handlers
+	// connect routes to handlers
 	r.Route("/receipts", func(r chi.Router) {
 		r.Post("/process", a.ProcessReceiptHandler)
 		r.Get("/{id}/points", a.GetPointsHandler)
@@ -60,5 +61,4 @@ func main() {
 	if err := http.ListenAndServe(":"+cfg.ServerPort, r); err != nil {
 		log.Fatalf("Server exited: %v", err)
 	}
-
 }

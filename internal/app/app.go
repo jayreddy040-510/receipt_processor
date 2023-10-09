@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jayreddy040-510/receipt_processor/internal/config"
 	"github.com/jayreddy040-510/receipt_processor/internal/db"
 
 	"github.com/go-chi/chi"
@@ -18,7 +20,8 @@ import (
 )
 
 type App struct {
-	Db *db.RedisStore
+	Db     *db.RedisStore
+	Config config.Config
 }
 
 type item struct {
@@ -82,7 +85,6 @@ func parseDateAsStringInput(dateString string) (int, error) {
 		return -1, fmt.Errorf("Error parsing purchaseDate: future date given (%v)", purchaseDate)
 	}
 	return purchaseDate.Day(), nil
-
 }
 
 func parseTimeAsStringInput(timeString, dateString string) (time.Time, error) {
@@ -206,7 +208,9 @@ func (a *App) ProcessReceiptHandler(w http.ResponseWriter, r *http.Request) {
 	pointsTotal += pointsFromPurchaseTimeHour
 	pointsTotalAsString := strconv.Itoa(pointsTotal)
 	uuidString := uuid.New().String()
-	err = a.Db.SetKey(r.Context(), uuidString, pointsTotalAsString)
+	ctx, cancel := context.WithTimeout(r.Context(), a.Config.DbTimeoutInMs)
+	defer cancel()
+	err = a.Db.SetKey(ctx, uuidString, pointsTotalAsString)
 	if err != nil {
 		log.Printf("Error setting DB key-value pair: %v", err)
 		http.Error(w, "The receipt is invalid", http.StatusBadRequest)
@@ -231,7 +235,9 @@ func (a *App) GetPointsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
 		return
 	}
-	pointsValue, err := a.Db.GetKey(r.Context(), receiptId)
+	ctx, cancel := context.WithTimeout(r.Context(), a.Config.DbTimeoutInMs)
+	defer cancel()
+	pointsValue, err := a.Db.GetKey(ctx, receiptId)
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "No receipt found for that id", http.StatusNotFound)
